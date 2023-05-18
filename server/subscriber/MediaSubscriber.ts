@@ -12,7 +12,7 @@ import notificationManager, { Notification } from '@server/lib/notifications';
 import logger from '@server/logger';
 import { truncate } from 'lodash';
 import type { EntitySubscriberInterface, UpdateEvent } from 'typeorm';
-import { EventSubscriber, In, Not } from 'typeorm';
+import { EventSubscriber, In } from 'typeorm';
 
 @EventSubscriber()
 export class MediaSubscriber implements EntitySubscriberInterface<Media> {
@@ -33,9 +33,8 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
               id: entity.id,
             },
             is4k,
-            status: Not(
-              MediaRequestStatus.DECLINED && MediaRequestStatus.COMPLETED
-            ),
+            status: MediaRequestStatus.COMPLETED,
+            isMediaDeleted: false,
           },
         });
 
@@ -118,9 +117,8 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
               id: entity.id,
             },
             is4k,
-            status: Not(
-              MediaRequestStatus.DECLINED && MediaRequestStatus.COMPLETED
-            ),
+            status: MediaRequestStatus.COMPLETED,
+            isMediaDeleted: false,
           },
         });
         const request = requests.find(

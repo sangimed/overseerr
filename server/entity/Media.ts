@@ -1,6 +1,10 @@
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
-import { MediaStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
 import downloadTracker from '@server/lib/downloadtracker';
@@ -8,6 +12,7 @@ import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import {
   AfterLoad,
+  AfterUpdate,
   Column,
   CreateDateColumn,
   Entity,
@@ -307,6 +312,89 @@ class Media {
           this.externalServiceId4k
         );
       }
+    }
+  }
+
+  @AfterUpdate()
+  public async updateRelatedMediaRequest(): Promise<void> {
+    const requestRepository = getRepository(MediaRequest);
+
+    const relatedRequests = await requestRepository.find({
+      relations: {
+        media: true,
+      },
+      where: {
+        media: { id: this.id },
+        status: In([MediaRequestStatus.APPROVED, MediaRequestStatus.COMPLETED]),
+      },
+    });
+
+    if (relatedRequests.length > 0) {
+      relatedRequests.forEach((request) => {
+        let isRequestComplete = false;
+
+        if (this.mediaType === 'movie') {
+          if (
+            this.status === MediaStatus.AVAILABLE ||
+            this.status === MediaStatus.DELETED
+          ) {
+            isRequestComplete = true;
+          }
+        }
+        if (this.mediaType === 'tv') {
+          const requestSeasons = request.seasons
+            .filter(
+              (seasonRequest) =>
+                seasonRequest.status === MediaRequestStatus.APPROVED ||
+                seasonRequest.status === MediaRequestStatus.COMPLETED
+            )
+            .map((season) => season.seasonNumber);
+          const mediaSeasons = request.media.seasons
+            .filter(
+              (season) =>
+                season[request?.is4k ? 'status4k' : 'status'] ===
+                  MediaStatus.AVAILABLE ||
+                season[request?.is4k ? 'status4k' : 'status'] ===
+                  MediaStatus.DELETED
+            )
+            .map((season) => season.seasonNumber);
+
+          const completedRequests = requestSeasons.every((seasonNumber) =>
+            mediaSeasons.includes(seasonNumber)
+          );
+
+          if (
+            completedRequests ||
+            this.status === MediaStatus.AVAILABLE ||
+            this.status === MediaStatus.DELETED
+          ) {
+            isRequestComplete = true;
+          }
+        }
+        if (isRequestComplete) {
+          request.status = MediaRequestStatus.COMPLETED;
+        }
+
+        const isRequestDeleted = request.seasons.filter((seasonRequest) => {
+          const seasonNumber = seasonRequest.seasonNumber;
+
+          (seasonRequest.status === MediaRequestStatus.APPROVED ||
+            seasonRequest.status === MediaRequestStatus.COMPLETED) &&
+            this.seasons.every(
+              (season) =>
+                season[request?.is4k ? 'status4k' : 'status'] ===
+                  MediaStatus.DELETED && season.seasonNumber === seasonNumber
+            );
+        });
+
+        if (
+          this[request?.is4k ? 'status4k' : 'status'] === MediaStatus.DELETED ||
+          isRequestDeleted.length === request.seasonCount
+        ) {
+          request.isMediaDeleted = true;
+        }
+      });
+      requestRepository.save(relatedRequests);
     }
   }
 }
